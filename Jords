@@ -1,0 +1,33 @@
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local function applyHighlight(character)
+	if not character then return end
+
+	local existing = character:FindFirstChild("ESPHighlight")
+	if existing then
+		return
+	end
+
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "ESPHighlight"
+	highlight.FillColor = Color3.fromRGB(255, 0, 0)
+	highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+	highlight.FillTransparency = 0.5
+	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	highlight.Parent = character
+end
+
+task.spawn(function()
+	while true do
+		for _, player in ipairs(Players:GetPlayers()) do
+			if player ~= LocalPlayer then
+				local character = player.Character
+				if character then
+					applyHighlight(character)
+				end
+			end
+		end
+		task.wait(1)
+	end
+end)
