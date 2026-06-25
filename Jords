@@ -13,7 +13,7 @@ local function applyHighlight(character)
 	highlight.Name = "ESPHighlight"
 	highlight.FillColor = Color3.fromRGB(255, 0, 0)
 	highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-	highlight.FillTransparency = 0.5
+	highlight.FillTransparency = 1
 	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 	highlight.Parent = character
 end
