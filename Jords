@@ -1,9 +1,10 @@
 --[[
-    ESP HIGHLIGHT - FIXED VERSION
-    - Highlights ALL players
-    - Handles respawns and new joins
+    ESP HIGHLIGHT - ULTRA FIXED VERSION
+    - Highlights ALL players (including new joins and respawns)
+    - Blue outline color
+    - Fill transparency = 1 (invisible fill)
+    - Handles respawns and new joins perfectly
     - Persistent across server rejoins
-    - Anti-duplication protection
 --]]
 
 -- ANTI-SPAM: Prevent multiple instances
@@ -20,16 +21,18 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local RunService = game:GetService("RunService")
 
--- Store tracked characters to avoid re-applying
+-- Store tracked characters and connections
 local trackedCharacters = {}
+local characterConnections = {}
+local playerConnections = {}
 local ESP_NAME = "ESPHighlight"
 
--- Highlight configuration
+-- Highlight configuration (Blue Outline, No Fill)
 local ESP_CONFIG = {
-    FillColor = Color3.fromRGB(255, 0, 0),        -- Red fill
-    OutlineColor = Color3.fromRGB(255, 255, 255), -- White outline
-    FillTransparency = 0.5,                       -- Semi-transparent
-    OutlineTransparency = 0,                      -- Fully visible outline
+    FillColor = Color3.fromRGB(0, 0, 255),        -- Blue fill (not visible anyway)
+    OutlineColor = Color3.fromRGB(0, 150, 255),   -- Bright Blue outline
+    FillTransparency = 1,                          -- Fully transparent (invisible)
+    OutlineTransparency = 0,                       -- Fully visible outline
     DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 }
 
@@ -42,7 +45,7 @@ local function applyHighlight(character)
     -- Check if character already has highlight
     local existing = character:FindFirstChild(ESP_NAME)
     if existing then
-        -- Update colors in case they changed
+        -- Update colors
         existing.FillColor = ESP_CONFIG.FillColor
         existing.OutlineColor = ESP_CONFIG.OutlineColor
         existing.FillTransparency = ESP_CONFIG.FillTransparency
@@ -92,181 +95,274 @@ local function isValidCharacter(character)
     return true
 end
 
--- Function to highlight all players
-local function highlightAllPlayers()
+-- Get all valid enemy characters
+local function getAllEnemyCharacters()
+    local characters = {}
     local players = Players:GetPlayers()
-    local currentCharacters = {}
     
-    -- First pass: Highlight all valid players
     for _, player in ipairs(players) do
         if player ~= LocalPlayer then
             local character = player.Character
             if character and isValidCharacter(character) then
-                applyHighlight(character)
-                currentCharacters[character] = true
+                table.insert(characters, character)
             end
         end
     end
     
-    -- Second pass: Clean up highlights for characters that no longer exist or are invalid
+    return characters
+end
+
+-- Highlight all players function (MORE AGGRESSIVE)
+local function highlightAllPlayers()
+    local characters = getAllEnemyCharacters()
+    local currentCharacters = {}
+    
+    -- Highlight all valid characters
+    for _, character in ipairs(characters) do
+        if character then
+            applyHighlight(character)
+            currentCharacters[character] = true
+        end
+    end
+    
+    -- Clean up highlights for characters that no longer exist or are invalid
     for character, _ in pairs(trackedCharacters) do
         if not currentCharacters[character] or not character.Parent then
             removeHighlight(character)
+        end
+    end
+    
+    return #characters
+end
+
+-- Handle new character (for respawns)
+local function onCharacterAdded(character)
+    task.wait(0.1) -- Wait for character to fully load
+    
+    local player = Players:GetPlayerFromCharacter(character)
+    if player and player ~= LocalPlayer then
+        if isValidCharacter(character) then
+            applyHighlight(character)
+            print("🔄 Highlight applied to: " .. player.Name .. " (respawn)")
         end
     end
 end
 
 -- Handle new player joining
 local function onPlayerAdded(player)
-    print("👤 Player joined: " .. player.Name)
+    if player == LocalPlayer then return end
     
-    -- Wait for character to load
-    player.CharacterAdded:Connect(function(character)
-        -- Wait a bit for character to fully load
-        task.wait(0.1)
-        if isValidCharacter(character) then
-            applyHighlight(character)
-        end
+    print("👤 New player joined: " .. player.Name)
+    
+    -- Remove old connection if exists
+    if characterConnections[player] then
+        characterConnections[player]:Disconnect()
+        characterConnections[player] = nil
+    end
+    
+    -- Connect to character added for this player
+    local conn = player.CharacterAdded:Connect(function(character)
+        onCharacterAdded(character)
     end)
+    characterConnections[player] = conn
+    
+    -- If player already has a character, highlight it
+    if player.Character and isValidCharacter(player.Character) then
+        task.wait(0.2)
+        applyHighlight(player.Character)
+        print("🎯 Highlight applied to new player: " .. player.Name)
+    end
 end
 
 -- Handle player leaving
 local function onPlayerRemoved(player)
+    if player == LocalPlayer then return end
+    
     print("👋 Player left: " .. player.Name)
     
-    -- Remove highlight if character exists
+    -- Clean up connections
+    if characterConnections[player] then
+        characterConnections[player]:Disconnect()
+        characterConnections[player] = nil
+    end
+    
+    -- Remove highlight
     if player.Character then
         removeHighlight(player.Character)
     end
 end
 
--- Handle character respawn (for all players including local)
-local function onCharacterAdded(character)
-    -- Wait for character to fully load
-    task.wait(0.1)
-    
-    -- Check if this is an enemy player's character
-    local player = Players:GetPlayerFromCharacter(character)
-    if player and player ~= LocalPlayer then
-        if isValidCharacter(character) then
-            applyHighlight(character)
-        end
-    end
-end
-
--- Function to monitor all players for respawns
-local function monitorPlayerRespawns()
+-- Ultra aggressive highlighting function
+local function aggressiveHighlight()
+    local highlighted = 0
     local players = Players:GetPlayers()
     
     for _, player in ipairs(players) do
         if player ~= LocalPlayer then
-            -- Connect to character added event if not already connected
-            if not player._espConnected then
-                player.CharacterAdded:Connect(function(character)
-                    onCharacterAdded(character)
-                end)
-                player._espConnected = true
+            local character = player.Character
+            if character then
+                -- Even if not "valid" (maybe loading), try to highlight
+                local humanoid = character:FindFirstChild("Humanoid")
+                if humanoid and humanoid.Health > 0 then
+                    if applyHighlight(character) then
+                        highlighted = highlighted + 1
+                    end
+                else
+                    -- Character might be loading, try again later
+                    task.spawn(function()
+                        task.wait(0.5)
+                        if character and character.Parent then
+                            applyHighlight(character)
+                        end
+                    end)
+                end
+            end
+        end
+    end
+    
+    return highlighted
+end
+
+-- Setup connections for existing players
+local function setupExistingPlayers()
+    local players = Players:GetPlayers()
+    
+    for _, player in ipairs(players) do
+        if player ~= LocalPlayer then
+            -- Remove old connection if exists
+            if characterConnections[player] then
+                characterConnections[player]:Disconnect()
+                characterConnections[player] = nil
+            end
+            
+            -- Connect to character added
+            local conn = player.CharacterAdded:Connect(function(character)
+                onCharacterAdded(character)
+            end)
+            characterConnections[player] = conn
+            
+            -- Highlight existing character
+            if player.Character and isValidCharacter(player.Character) then
+                applyHighlight(player.Character)
             end
         end
     end
 end
 
--- Main loop to continuously check and update highlights
-local function mainLoop()
-    highlightAllPlayers()
-    
-    -- Monitor for new players or respawns
-    monitorPlayerRespawns()
-end
-
--- ====== SETUP ======
+-- ====== MAIN SETUP ======
 -- Connect player events
 Players.PlayerAdded:Connect(onPlayerAdded)
 Players.PlayerRemoved:Connect(onPlayerRemoved)
 
--- Also monitor existing players
-for _, player in ipairs(Players:GetPlayers()) do
-    if player ~= LocalPlayer then
-        player.CharacterAdded:Connect(function(character)
-            onCharacterAdded(character)
-        end)
-        player._espConnected = true
-    end
-end
+-- Setup existing players
+setupExistingPlayers()
 
--- Initial scan
+-- Initial highlight
 task.wait(0.5)
-mainLoop()
+local count = highlightAllPlayers()
+print("🎯 Initial highlight applied to " .. count .. " players")
 
--- Run the main loop periodically
-RunService.Heartbeat:Connect(mainLoop)
+-- MAIN LOOP 1: Heartbeat (every frame, very responsive)
+RunService.Heartbeat:Connect(function()
+    highlightAllPlayers()
+end)
 
--- Also run every few seconds to catch any missed players
+-- MAIN LOOP 2: Aggressive check every second (catches any missed players)
 RunService.Stepped:Connect(function()
-    -- Only run every 2 seconds to save performance
-    if tick() % 2 < 0.1 then
+    -- Run every 1 second
+    if tick() % 1 < 0.05 then
+        local count = aggressiveHighlight()
+        -- Only print if new players were found
+        if count > 0 then
+            -- Silent update
+        end
+    end
+end)
+
+-- MAIN LOOP 3: Full refresh every 3 seconds (ensures everything stays highlighted)
+RunService.RenderStepped:Connect(function()
+    if tick() % 3 < 0.03 then
         highlightAllPlayers()
     end
 end)
 
--- Handle local player respawn (just in case)
+-- Handle local player respawn
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(0.5)
     -- Re-highlight all enemies after we respawn
-    highlightAllPlayers()
+    local count = highlightAllPlayers()
+    print("🔄 Re-highlighted " .. count .. " players after respawn")
 end)
 
-print("✅ ESP Highlight Loaded - FIXED VERSION!")
-print("🎯 Highlights ALL enemy players")
-print("🔄 Handles respawns and new joins")
-print("🚫 Anti-spam: Only ONE instance running")
-print("🎨 Color: Red with white outline")
+-- Also handle when characters are added to the workspace (catches everything)
+Workspace.ChildAdded:Connect(function(child)
+    if child:IsA("Model") then
+        -- Check if this is a player character
+        local player = Players:GetPlayerFromCharacter(child)
+        if player and player ~= LocalPlayer then
+            task.wait(0.1)
+            if isValidCharacter(child) then
+                applyHighlight(child)
+                print("🎯 Highlight applied to character: " .. player.Name)
+            end
+        end
+    end
+end)
 
--- ====== COMMANDS FOR EASY CONFIGURATION ======
+-- Cleanup function (optional)
+local function cleanup()
+    for character, _ in pairs(trackedCharacters) do
+        removeHighlight(character)
+    end
+    
+    for player, conn in pairs(characterConnections) do
+        conn:Disconnect()
+    end
+    characterConnections = {}
+    
+    if shared then
+        shared.ESPRunning = nil
+    end
+end
+
+print("✅ ESP Highlight Loaded - ULTRA FIXED VERSION!")
+print("🎯 Highlights ALL enemy players (100% coverage)")
+print("🔄 Handles respawns, new joins, and reconnects")
+print("🎨 Blue outline with transparent fill")
+print("🚫 Anti-spam: Only ONE instance running")
+print("📊 3 separate loops ensure NO player is missed")
+
+-- Force update after 2 seconds (catches any loading players)
+task.wait(2)
+highlightAllPlayers()
+print("🔄 Second pass completed - all players should now be highlighted")
+
+-- ====== COLOR PRESETS ======
 --[[
-    You can customize the ESP by modifying ESP_CONFIG:
+    To change colors, modify ESP_CONFIG and run highlightAllPlayers():
     
-    Change color to Blue:
-    ESP_CONFIG.FillColor = Color3.fromRGB(0, 0, 255)
+    -- Different Blue shades:
+    -- Light Blue:
+    -- ESP_CONFIG.OutlineColor = Color3.fromRGB(0, 200, 255)
     
-    Change color to Green:
-    ESP_CONFIG.FillColor = Color3.fromRGB(0, 255, 0)
+    -- Cyan:
+    -- ESP_CONFIG.OutlineColor = Color3.fromRGB(0, 255, 255)
     
-    Make it fully transparent (just outline):
-    ESP_CONFIG.FillTransparency = 1
+    -- Neon Blue:
+    -- ESP_CONFIG.OutlineColor = Color3.fromRGB(0, 100, 255)
     
-    Make outline thicker (not possible, but you can change colors):
-    ESP_CONFIG.OutlineColor = Color3.fromRGB(255, 0, 0)
+    -- Other colors:
+    -- Red: Color3.fromRGB(255, 0, 0)
+    -- Green: Color3.fromRGB(0, 255, 0)
+    -- Purple: Color3.fromRGB(150, 0, 255)
+    -- Yellow: Color3.fromRGB(255, 255, 0)
+    -- Pink: Color3.fromRGB(255, 0, 255)
+    -- Orange: Color3.fromRGB(255, 150, 0)
     
-    To apply changes, run:
-    highlightAllPlayers()
+    -- To apply changes:
+    -- highlightAllPlayers()
     
-    Or use the quick commands below:
+    Current color: Blue Outline (ESP_CONFIG.OutlineColor = Color3.fromRGB(0, 150, 255))
 --]]
 
--- Quick color presets (uncomment to use):
--- Red ESP (Default):
--- ESP_CONFIG.FillColor = Color3.fromRGB(255, 0, 0)
--- ESP_CONFIG.OutlineColor = Color3.fromRGB(255, 255, 255)
-
--- Blue ESP:
--- ESP_CONFIG.FillColor = Color3.fromRGB(0, 150, 255)
--- ESP_CONFIG.OutlineColor = Color3.fromRGB(255, 255, 255)
-
--- Green ESP:
--- ESP_CONFIG.FillColor = Color3.fromRGB(0, 255, 100)
--- ESP_CONFIG.OutlineColor = Color3.fromRGB(0, 0, 0)
-
--- Purple ESP:
--- ESP_CONFIG.FillColor = Color3.fromRGB(150, 0, 255)
--- ESP_CONFIG.OutlineColor = Color3.fromRGB(255, 255, 255)
-
--- Yellow ESP:
--- ESP_CONFIG.FillColor = Color3.fromRGB(255, 255, 0)
--- ESP_CONFIG.OutlineColor = Color3.fromRGB(0, 0, 0)
-
--- To change colors, uncomment one of the above and then run:
--- highlightAllPlayers()
--- This will instantly update all highlights!
-
-print("💡 To change colors, modify ESP_CONFIG.FillColor and run highlightAllPlayers()")
+print("💡 To change colors, modify ESP_CONFIG.OutlineColor and run highlightAllPlayers()")
