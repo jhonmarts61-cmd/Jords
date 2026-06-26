@@ -1,33 +1,272 @@
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
+--[[
+    ESP HIGHLIGHT - FIXED VERSION
+    - Highlights ALL players
+    - Handles respawns and new joins
+    - Persistent across server rejoins
+    - Anti-duplication protection
+--]]
 
-local function applyHighlight(character)
-	if not character then return end
-
-	local existing = character:FindFirstChild("ESPHighlight")
-	if existing then
-		return
-	end
-
-	local highlight = Instance.new("Highlight")
-	highlight.Name = "ESPHighlight"
-	highlight.FillColor = Color3.fromRGB(255, 0, 0)
-	highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-	highlight.FillTransparency = 1
-	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	highlight.Parent = character
+-- ANTI-SPAM: Prevent multiple instances
+if shared and shared.ESPRunning then
+    print("⚠️ ESP already running, stopping duplicate...")
+    return
 end
 
-task.spawn(function()
-	while true do
-		for _, player in ipairs(Players:GetPlayers()) do
-			if player ~= LocalPlayer then
-				local character = player.Character
-				if character then
-					applyHighlight(character)
-				end
-			end
-		end
-		task.wait(1)
-	end
+if shared then
+    shared.ESPRunning = true
+end
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+
+-- Store tracked characters to avoid re-applying
+local trackedCharacters = {}
+local ESP_NAME = "ESPHighlight"
+
+-- Highlight configuration
+local ESP_CONFIG = {
+    FillColor = Color3.fromRGB(255, 0, 0),        -- Red fill
+    OutlineColor = Color3.fromRGB(255, 255, 255), -- White outline
+    FillTransparency = 0.5,                       -- Semi-transparent
+    OutlineTransparency = 0,                      -- Fully visible outline
+    DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+}
+
+-- Function to apply highlight to a character
+local function applyHighlight(character)
+    if not character or not character:IsA("Model") then 
+        return false 
+    end
+    
+    -- Check if character already has highlight
+    local existing = character:FindFirstChild(ESP_NAME)
+    if existing then
+        -- Update colors in case they changed
+        existing.FillColor = ESP_CONFIG.FillColor
+        existing.OutlineColor = ESP_CONFIG.OutlineColor
+        existing.FillTransparency = ESP_CONFIG.FillTransparency
+        existing.OutlineTransparency = ESP_CONFIG.OutlineTransparency
+        existing.DepthMode = ESP_CONFIG.DepthMode
+        return true
+    end
+    
+    -- Create new highlight
+    local highlight = Instance.new("Highlight")
+    highlight.Name = ESP_NAME
+    highlight.FillColor = ESP_CONFIG.FillColor
+    highlight.OutlineColor = ESP_CONFIG.OutlineColor
+    highlight.FillTransparency = ESP_CONFIG.FillTransparency
+    highlight.OutlineTransparency = ESP_CONFIG.OutlineTransparency
+    highlight.DepthMode = ESP_CONFIG.DepthMode
+    highlight.Parent = character
+    
+    -- Add to tracked list
+    trackedCharacters[character] = true
+    
+    return true
+end
+
+-- Function to remove highlight from a character
+local function removeHighlight(character)
+    if not character then return end
+    
+    local highlight = character:FindFirstChild(ESP_NAME)
+    if highlight then
+        highlight:Destroy()
+    end
+    
+    trackedCharacters[character] = nil
+end
+
+-- Function to check if character is valid (has humanoid and is alive)
+local function isValidCharacter(character)
+    if not character then return false end
+    if not character:IsA("Model") then return false end
+    
+    local humanoid = character:FindFirstChild("Humanoid")
+    if not humanoid then return false end
+    if humanoid.Health <= 0 then return false end
+    if humanoid:GetState() == Enum.HumanoidStateType.Dead then return false end
+    
+    return true
+end
+
+-- Function to highlight all players
+local function highlightAllPlayers()
+    local players = Players:GetPlayers()
+    local currentCharacters = {}
+    
+    -- First pass: Highlight all valid players
+    for _, player in ipairs(players) do
+        if player ~= LocalPlayer then
+            local character = player.Character
+            if character and isValidCharacter(character) then
+                applyHighlight(character)
+                currentCharacters[character] = true
+            end
+        end
+    end
+    
+    -- Second pass: Clean up highlights for characters that no longer exist or are invalid
+    for character, _ in pairs(trackedCharacters) do
+        if not currentCharacters[character] or not character.Parent then
+            removeHighlight(character)
+        end
+    end
+end
+
+-- Handle new player joining
+local function onPlayerAdded(player)
+    print("👤 Player joined: " .. player.Name)
+    
+    -- Wait for character to load
+    player.CharacterAdded:Connect(function(character)
+        -- Wait a bit for character to fully load
+        task.wait(0.1)
+        if isValidCharacter(character) then
+            applyHighlight(character)
+        end
+    end)
+end
+
+-- Handle player leaving
+local function onPlayerRemoved(player)
+    print("👋 Player left: " .. player.Name)
+    
+    -- Remove highlight if character exists
+    if player.Character then
+        removeHighlight(player.Character)
+    end
+end
+
+-- Handle character respawn (for all players including local)
+local function onCharacterAdded(character)
+    -- Wait for character to fully load
+    task.wait(0.1)
+    
+    -- Check if this is an enemy player's character
+    local player = Players:GetPlayerFromCharacter(character)
+    if player and player ~= LocalPlayer then
+        if isValidCharacter(character) then
+            applyHighlight(character)
+        end
+    end
+end
+
+-- Function to monitor all players for respawns
+local function monitorPlayerRespawns()
+    local players = Players:GetPlayers()
+    
+    for _, player in ipairs(players) do
+        if player ~= LocalPlayer then
+            -- Connect to character added event if not already connected
+            if not player._espConnected then
+                player.CharacterAdded:Connect(function(character)
+                    onCharacterAdded(character)
+                end)
+                player._espConnected = true
+            end
+        end
+    end
+end
+
+-- Main loop to continuously check and update highlights
+local function mainLoop()
+    highlightAllPlayers()
+    
+    -- Monitor for new players or respawns
+    monitorPlayerRespawns()
+end
+
+-- ====== SETUP ======
+-- Connect player events
+Players.PlayerAdded:Connect(onPlayerAdded)
+Players.PlayerRemoved:Connect(onPlayerRemoved)
+
+-- Also monitor existing players
+for _, player in ipairs(Players:GetPlayers()) do
+    if player ~= LocalPlayer then
+        player.CharacterAdded:Connect(function(character)
+            onCharacterAdded(character)
+        end)
+        player._espConnected = true
+    end
+end
+
+-- Initial scan
+task.wait(0.5)
+mainLoop()
+
+-- Run the main loop periodically
+RunService.Heartbeat:Connect(mainLoop)
+
+-- Also run every few seconds to catch any missed players
+RunService.Stepped:Connect(function()
+    -- Only run every 2 seconds to save performance
+    if tick() % 2 < 0.1 then
+        highlightAllPlayers()
+    end
 end)
+
+-- Handle local player respawn (just in case)
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    -- Re-highlight all enemies after we respawn
+    highlightAllPlayers()
+end)
+
+print("✅ ESP Highlight Loaded - FIXED VERSION!")
+print("🎯 Highlights ALL enemy players")
+print("🔄 Handles respawns and new joins")
+print("🚫 Anti-spam: Only ONE instance running")
+print("🎨 Color: Red with white outline")
+
+-- ====== COMMANDS FOR EASY CONFIGURATION ======
+--[[
+    You can customize the ESP by modifying ESP_CONFIG:
+    
+    Change color to Blue:
+    ESP_CONFIG.FillColor = Color3.fromRGB(0, 0, 255)
+    
+    Change color to Green:
+    ESP_CONFIG.FillColor = Color3.fromRGB(0, 255, 0)
+    
+    Make it fully transparent (just outline):
+    ESP_CONFIG.FillTransparency = 1
+    
+    Make outline thicker (not possible, but you can change colors):
+    ESP_CONFIG.OutlineColor = Color3.fromRGB(255, 0, 0)
+    
+    To apply changes, run:
+    highlightAllPlayers()
+    
+    Or use the quick commands below:
+--]]
+
+-- Quick color presets (uncomment to use):
+-- Red ESP (Default):
+-- ESP_CONFIG.FillColor = Color3.fromRGB(255, 0, 0)
+-- ESP_CONFIG.OutlineColor = Color3.fromRGB(255, 255, 255)
+
+-- Blue ESP:
+-- ESP_CONFIG.FillColor = Color3.fromRGB(0, 150, 255)
+-- ESP_CONFIG.OutlineColor = Color3.fromRGB(255, 255, 255)
+
+-- Green ESP:
+-- ESP_CONFIG.FillColor = Color3.fromRGB(0, 255, 100)
+-- ESP_CONFIG.OutlineColor = Color3.fromRGB(0, 0, 0)
+
+-- Purple ESP:
+-- ESP_CONFIG.FillColor = Color3.fromRGB(150, 0, 255)
+-- ESP_CONFIG.OutlineColor = Color3.fromRGB(255, 255, 255)
+
+-- Yellow ESP:
+-- ESP_CONFIG.FillColor = Color3.fromRGB(255, 255, 0)
+-- ESP_CONFIG.OutlineColor = Color3.fromRGB(0, 0, 0)
+
+-- To change colors, uncomment one of the above and then run:
+-- highlightAllPlayers()
+-- This will instantly update all highlights!
+
+print("💡 To change colors, modify ESP_CONFIG.FillColor and run highlightAllPlayers()")
