@@ -11,8 +11,8 @@ local function applyHighlight(character)
 
 	local highlight = Instance.new("Highlight")
 	highlight.Name = "ESPHighlight"
-	highlight.FillColor = Color3.fromRGB(255, 0, 0), -- Red fill
-	highlight.OutlineColor = Color3.fromRGB(255, 255, 255), -- Bright Blue outline
+	highlight.FillColor = Color3.fromRGB(255, 0, 0)
+	highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
 	highlight.FillTransparency = 0.8
 	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 	highlight.Parent = character
